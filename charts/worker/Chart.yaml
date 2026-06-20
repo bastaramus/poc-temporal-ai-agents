@@ -1,0 +1,6 @@
+apiVersion: v2
+name: worker
+description: Temporal worker pod (no tenant creds at boot, BindIdentity at task claim)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

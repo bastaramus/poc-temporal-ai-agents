@@ -1,0 +1,6 @@
+apiVersion: v2
+name: internal-api-server
+description: Internal API server (BindIdentity + tool endpoints, only DB caller)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,22 @@
+image:
+  repository: poc/worker
+  tag: dev
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: worker-sa
+
+projectedSaToken:
+  audience: internal-api
+  expirationSeconds: 3600
+
+env: {}

@@ -1,0 +1,21 @@
+image:
+  repository: poc/internal-api-server
+  tag: dev
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  name: internal-api-sa
+
+env: {}

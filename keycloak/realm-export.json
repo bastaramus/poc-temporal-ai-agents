@@ -1,0 +1,137 @@
+{
+  "realm": "agent-poc",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 900,
+
+  "_comment_token_exchange":
+    "Token-exchange (RFC 8693) is enabled by passing --features=token-exchange to kc.sh start-dev. The internal-api-client below is permitted to exchange.",
+
+  "attributes": {
+    "frontendUrl": ""
+  },
+
+  "roles": {
+    "realm": [
+      { "name": "tool:read-doc"  },
+      { "name": "tool:write-doc" }
+    ]
+  },
+
+  "clientScopes": [
+    {
+      "name": "tenant",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true" },
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
+  "defaultDefaultClientScopes": ["tenant"],
+  "defaultOptionalClientScopes": [],
+
+  "clients": [
+    {
+      "clientId": "public-api-client",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [],
+      "webOrigins": ["+"],
+      "attributes": {
+        "access.token.lifespan": "900"
+      },
+      "defaultClientScopes": ["tenant"],
+      "_comment":
+        "End-user JWTs target this client as audience. Tokens carry sub, preferred_username, email, tenant_id."
+    },
+
+    {
+      "clientId": "internal-api-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "internal-api-secret-change-me",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "attributes": {
+        "access.token.lifespan": "900",
+        "token.exchange.grant.enabled": "true"
+      },
+      "_comment":
+        "This client is the only one allowed to call token-exchange. Its service account login produces the subject_token; the exchange narrows it to worker-pod-client with extra claims."
+    },
+
+    {
+      "clientId": "worker-pod-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "not-used-pods-do-not-login",
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "attributes": {
+        "access.token.lifespan": "900"
+      },
+      "_comment":
+        "Audience of the narrowed task JWT. Pods never authenticate as this client; they only RECEIVE tokens whose `aud` is this client. The internal-api-server validates this audience on tool calls."
+    }
+  ],
+
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "A",
+      "id": "alice-sub-0001",
+      "credentials": [
+        { "type": "password", "value": "alice-password", "temporary": false }
+      ],
+      "attributes": {
+        "tenant_id": ["11111111-1111-1111-1111-111111111111"]
+      },
+      "realmRoles": ["tool:read-doc", "tool:write-doc"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.com",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "B",
+      "id": "bob-sub-0002",
+      "credentials": [
+        { "type": "password", "value": "bob-password", "temporary": false }
+      ],
+      "attributes": {
+        "tenant_id": ["22222222-2222-2222-2222-222222222222"]
+      },
+      "realmRoles": ["tool:read-doc", "tool:write-doc"]
+    }
+  ]
+}

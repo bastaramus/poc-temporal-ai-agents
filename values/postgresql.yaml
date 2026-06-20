@@ -1,0 +1,43 @@
+## Bitnami postgresql 18.7.6 — single replica, tiny resources.
+## TODO: in prod use a managed Postgres (RDS/Cloud SQL) and External Secrets.
+
+## Bitnami restricted free `latest` tags in Sept 2024. The legacy registry
+## still serves the old freely-pullable images; pin to a known-good Postgres 16.
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/postgresql
+  tag: 16.4.0-debian-12-r10
+
+architecture: standalone
+
+auth:
+  postgresPassword: change-me-postgres
+  database: poc
+  username: app_owner
+  password: change-me-owner
+
+primary:
+  ## Disable the resourcesPreset and supply explicit resources — chart 18+
+  ## errors out if both are set, and silently 'nano'-caps if neither.
+  resourcesPreset: "none"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  persistence:
+    enabled: true
+    size: 1Gi
+
+  ## Bitnami runs every script in this ConfigMap (mounted at
+  ## /docker-entrypoint-initdb.d/) on first boot, as the postgres superuser.
+  ## The ConfigMap is created by scripts/install.sh from db/*.sql.
+  initdb:
+    scriptsConfigMap: poc-migrations

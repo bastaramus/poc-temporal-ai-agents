@@ -1,0 +1,33 @@
+namespace: agent-poc
+
+postgres:
+  host: postgresql.agent-poc.svc.cluster.local
+  port: 5432
+  database: poc
+  appOwnerUser: app_owner
+  appOwnerPassword: change-me-owner   # TODO: External Secrets in prod
+  appRuntimeUser: app_runtime
+  appRuntimePassword: change-me-runtime
+  postgresPassword: change-me-postgres
+
+keycloak:
+  host: keycloak-keycloakx-http.agent-poc.svc.cluster.local
+  port: 8080
+  realm: agent-poc
+  publicApiClientId: public-api-client
+  internalApiClientId: internal-api-client
+  internalApiClientSecret: internal-api-secret-change-me
+  workerPodClientId: worker-pod-client
+
+temporal:
+  host: temporal-frontend.agent-poc.svc.cluster.local
+  port: 7233
+
+temporalNamespace: default
+taskQueue: agent-tasks
+
+tenants:
+  - id: 11111111-1111-1111-1111-111111111111
+    slug: tenant-a
+  - id: 22222222-2222-2222-2222-222222222222
+    slug: tenant-b

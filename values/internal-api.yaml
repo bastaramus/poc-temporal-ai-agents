@@ -1,0 +1,37 @@
+image:
+  repository: poc/internal-api-server
+  tag: dev
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+serviceAccount:
+  create: true
+  name: internal-api-sa
+
+env:
+  KEYCLOAK_ISSUER: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc
+  KEYCLOAK_JWKS_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/certs
+  KEYCLOAK_TOKEN_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/token
+  INTERNAL_CLIENT_ID: internal-api-client
+  INTERNAL_CLIENT_SECRET: internal-api-secret-change-me  # TODO: External Secrets
+  WORKER_AUDIENCE: worker-pod-client
+  TEMPORAL_HOST: temporal-frontend.agent-poc.svc.cluster.local:7233
+  TEMPORAL_NAMESPACE: default
+  PG_HOST: postgresql.agent-poc.svc.cluster.local
+  PG_PORT: "5432"
+  PG_DATABASE: poc
+  PG_USER: app_runtime
+  PG_PASSWORD: change-me-runtime
+  PORT: "8080"
+  ## Allow this SA name to call /bind-identity. Multiple SAs comma-separated.
+  ALLOWED_WORKER_SAS: "system:serviceaccount:agent-poc:worker-sa"

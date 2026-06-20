@@ -1,0 +1,78 @@
+## temporal/temporal 1.2.0 (Temporal server 1.31.0).
+## Smallest practical Temporal: single replica per service, Postgres persistence,
+## Web UI on, no Cassandra/MySQL/ES/Prometheus/Grafana addons.
+## Schema is registered automatically by the chart's Helm hooks (schema.useHelmHooks).
+
+server:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  config:
+    logLevel: "info"
+    persistence:
+      defaultStore: default
+      visibilityStore: visibility
+      numHistoryShards: 4   # tiny for PoC; do NOT change after first deploy
+      datastores:
+        default:
+          sql:
+            pluginName: postgres12_pgx
+            driverName: postgres12_pgx
+            databaseName: temporal
+            connectAddr: "postgresql.agent-poc.svc.cluster.local:5432"
+            connectProtocol: "tcp"
+            user: postgres
+            password: change-me-postgres   # TODO: existingSecret in prod
+            maxConns: 20
+            maxIdleConns: 20
+        visibility:
+          sql:
+            pluginName: postgres12_pgx
+            driverName: postgres12_pgx
+            databaseName: temporal_visibility
+            connectAddr: "postgresql.agent-poc.svc.cluster.local:5432"
+            connectProtocol: "tcp"
+            user: postgres
+            password: change-me-postgres
+            maxConns: 10
+            maxIdleConns: 10
+
+# Schema setup — runs as a Helm hook before server pods start.
+schema:
+  useHelmHooks: true
+
+# tctl + curl utilities. Useful for `kubectl exec` to register namespaces or
+# poke at workflows during the PoC.
+admintools:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Temporal UI on http://temporal-web:8080 (port-forwarded by scripts/port-forward.sh).
+web:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Disable the elasticsearch tooling shim — we use SQL visibility on Postgres.
+shims:
+  dockerize: false
+  elasticsearchTool: false

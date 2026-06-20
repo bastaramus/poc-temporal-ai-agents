@@ -1,0 +1,62 @@
+## codecentric/keycloakx 7.2.0 — single replica, dev mode (no TLS), realm imported on boot.
+## TODO: production = HA, persistent realm config in DB, TLS.
+
+replicas: 1
+
+# 'start-dev' for the PoC; production should use 'start' with proper config.
+command:
+  - "/opt/keycloak/bin/kc.sh"
+args:
+  - "start-dev"
+  - "--import-realm"
+  - "--features=token-exchange,admin-fine-grained-authz"
+
+# Postgres backend for Keycloak's own state.
+database:
+  vendor: postgres
+  hostname: postgresql.agent-poc.svc.cluster.local
+  port: 5432
+  database: keycloak
+  username: postgres
+  password: change-me-postgres
+  # TODO: switch to existingSecret in production.
+
+# Admin bootstrap + dev runtime tweaks. The string-template format is what
+# keycloakx 7 expects — yes, including the leading dash.
+# NOTE: KC_HTTP_ENABLED and KC_PROXY_HEADERS are set by the chart itself, so
+# don't add them here — Kubernetes rejects duplicate env keys.
+extraEnv: |
+  - name: KEYCLOAK_ADMIN
+    value: admin
+  - name: KEYCLOAK_ADMIN_PASSWORD
+    value: admin
+  - name: KC_HOSTNAME_STRICT
+    value: "false"
+
+# Mount the realm-import ConfigMap into /opt/keycloak/data/import — kc start-dev
+# --import-realm reads anything in that directory at boot.
+extraVolumes: |
+  - name: realm
+    configMap:
+      name: keycloak-realm
+
+extraVolumeMounts: |
+  - name: realm
+    mountPath: /opt/keycloak/data/import
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# Default in keycloakx is /auth — we serve the realm at /, matching the JWKS
+# URL hard-coded in the services' env vars.
+http:
+  relativePath: "/"
+
+service:
+  type: ClusterIP
+  httpPort: 8080

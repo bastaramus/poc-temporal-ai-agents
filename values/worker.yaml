@@ -1,0 +1,31 @@
+image:
+  repository: poc/worker
+  tag: dev
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: worker-sa
+
+env:
+  TEMPORAL_HOST: temporal-frontend.agent-poc.svc.cluster.local:7233
+  TEMPORAL_NAMESPACE: default
+  TASK_QUEUE: agent-tasks
+  INTERNAL_API_URL: http://internal-api-server.agent-poc.svc.cluster.local:8080
+  ## Audience that the projected SA token will be issued for. The internal-api-server
+  ## checks the audience as part of TokenReview.
+  SA_TOKEN_AUDIENCE: internal-api
+
+## Projected ServiceAccount token: short-lived, audience-scoped. This is the only
+## credential the pod has at boot.
+projectedSaToken:
+  audience: internal-api
+  expirationSeconds: 3600
