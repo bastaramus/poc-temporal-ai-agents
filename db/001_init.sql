@@ -1,15 +1,28 @@
--- Runs as the postgres superuser via bitnami initdb.
--- Creates roles, the poc database, and the schema. The runtime role MUST NOT
--- be the table owner and MUST NOT have BYPASSRLS.
+-- Idempotent schema bootstrap for the poc DB.
+-- Runs as the postgres superuser via bitnami initdb on a fresh PVC, AND can be
+-- safely re-run by hand against an existing PVC where initdb didn't fire.
+-- Every CREATE is guarded so re-runs produce no diff.
 
-CREATE ROLE app_owner   WITH LOGIN PASSWORD 'change-me-owner';
-CREATE ROLE app_runtime WITH LOGIN PASSWORD 'change-me-runtime' NOBYPASSRLS;
+-- Roles ───────────────────────────────────────────────────────────────────
+DO $$ BEGIN
+  CREATE ROLE app_owner   WITH LOGIN PASSWORD 'change-me-owner';
+EXCEPTION WHEN duplicate_object THEN
+  ALTER ROLE app_owner   WITH LOGIN PASSWORD 'change-me-owner';
+END $$;
 
--- Temporal and Keycloak each need their own DB; bitnami creates only the
--- one named in auth.database (poc). We're already running as superuser here.
-CREATE DATABASE keycloak            OWNER postgres;
-CREATE DATABASE temporal            OWNER postgres;
-CREATE DATABASE temporal_visibility OWNER postgres;
+DO $$ BEGIN
+  CREATE ROLE app_runtime WITH LOGIN PASSWORD 'change-me-runtime' NOBYPASSRLS;
+EXCEPTION WHEN duplicate_object THEN
+  ALTER ROLE app_runtime WITH LOGIN PASSWORD 'change-me-runtime' NOBYPASSRLS;
+END $$;
+
+-- Side databases (Temporal + Keycloak each need their own) ────────────────
+SELECT 'CREATE DATABASE keycloak             OWNER postgres'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'keycloak') \gexec
+SELECT 'CREATE DATABASE temporal             OWNER postgres'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'temporal') \gexec
+SELECT 'CREATE DATABASE temporal_visibility  OWNER postgres'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'temporal_visibility') \gexec
 
 -- The poc DB. Bitnami already created it with owner=app_owner via auth.username.
 GRANT CONNECT ON DATABASE poc TO app_runtime;
@@ -20,21 +33,21 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 SET ROLE app_owner;
 
-CREATE TABLE tenants (
+CREATE TABLE IF NOT EXISTS tenants (
   id    UUID PRIMARY KEY,
   slug  TEXT NOT NULL UNIQUE,
   name  TEXT NOT NULL
 );
 
-CREATE TABLE users (
-  sub               TEXT PRIMARY KEY,           -- Keycloak sub
-  tenant_id         UUID NOT NULL REFERENCES tenants(id),
+CREATE TABLE IF NOT EXISTS users (
+  sub                TEXT PRIMARY KEY,           -- Keycloak sub
+  tenant_id          UUID NOT NULL REFERENCES tenants(id),
   preferred_username TEXT NOT NULL,
-  email             TEXT NOT NULL
+  email              TEXT NOT NULL
 );
-CREATE INDEX users_tenant_idx ON users(tenant_id);
+CREATE INDEX IF NOT EXISTS users_tenant_idx ON users(tenant_id);
 
-CREATE TABLE documents (
+CREATE TABLE IF NOT EXISTS documents (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id   UUID NOT NULL,
   title       TEXT NOT NULL,
@@ -43,9 +56,9 @@ CREATE TABLE documents (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX documents_tenant_idx ON documents(tenant_id);
+CREATE INDEX IF NOT EXISTS documents_tenant_idx ON documents(tenant_id);
 
-CREATE TABLE agent_runs (
+CREATE TABLE IF NOT EXISTS agent_runs (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id   UUID NOT NULL,
   user_sub    TEXT NOT NULL,
@@ -55,9 +68,9 @@ CREATE TABLE agent_runs (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX agent_runs_tenant_idx ON agent_runs(tenant_id);
+CREATE INDEX IF NOT EXISTS agent_runs_tenant_idx ON agent_runs(tenant_id);
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id     UUID NOT NULL,
   actor         TEXT NOT NULL,
@@ -68,14 +81,13 @@ CREATE TABLE audit_log (
   reason        TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX audit_log_tenant_idx ON audit_log(tenant_id);
+CREATE INDEX IF NOT EXISTS audit_log_tenant_idx ON audit_log(tenant_id);
 
 -- Runtime role gets only DML on these tables, never ownership.
 GRANT USAGE ON SCHEMA public TO app_runtime;
-GRANT SELECT, INSERT, UPDATE        ON tenants, users, documents, agent_runs TO app_runtime;
-GRANT SELECT, INSERT                ON audit_log                              TO app_runtime;
+GRANT SELECT, INSERT, UPDATE  ON tenants, users, documents, agent_runs TO app_runtime;
+GRANT SELECT, INSERT          ON audit_log                              TO app_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_runtime;
 
 RESET ROLE;
--- 002_rls.sql and 003_seed.sql are run automatically by bitnami initdb in
--- alphabetical order — they live in the same ConfigMap and don't need an \i.
+-- 002_rls.sql and 003_seed.sql run after this (alphabetical order in the ConfigMap).

@@ -1,6 +1,6 @@
 **Author:** Dmytro Khomenko
 
-**Time spent:** ~7 hours
+**Time spent:** ~6 hours for this doc. 4 hours for the PoC.
 
 PoC repo: https://github.com/bastaramus/poc-temporal-ai-agents
 

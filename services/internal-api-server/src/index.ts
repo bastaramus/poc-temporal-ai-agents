@@ -1,29 +1,31 @@
 import Fastify from 'fastify';
 import { Connection, WorkflowClient } from '@temporalio/client';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { jwtVerify } from 'jose';
 
 import { verifyServiceAccountToken } from './k8s.js';
-import { clientCredentialsLogin, tokenExchange } from './keycloak.js';
+import {
+  mintNarrowedJwt,
+  NARROWED_VERIFY_SECRET,
+  NARROWED_EXPECTED_ISSUER,
+} from './narrowed-jwt.js';
 import { withTenantTx, audit } from './db.js';
 
-const ISSUER = process.env.KEYCLOAK_ISSUER!;
-const JWKS_URL = process.env.KEYCLOAK_JWKS_URL!;
 const WORKER_AUDIENCE = process.env.WORKER_AUDIENCE ?? 'worker-pod-client';
 const TEMPORAL_HOST = process.env.TEMPORAL_HOST ?? 'localhost:7233';
 const TEMPORAL_NAMESPACE = process.env.TEMPORAL_NAMESPACE ?? 'default';
 const PORT = parseInt(process.env.PORT ?? '8080', 10);
 
-const jwks = createRemoteJWKSet(new URL(JWKS_URL));
-
 async function verifyNarrowedJwt(authz: string | undefined) {
   if (!authz?.startsWith('Bearer ')) throw new Error('missing bearer');
   const token = authz.slice('Bearer '.length);
-  const { payload } = await jwtVerify(token, jwks, { issuer: ISSUER });
-  // Critical audience check: tool endpoints accept ONLY narrowed tokens.
-  // A user JWT (audience=public-api-client) replayed here must fail.
-  const aud = payload.aud;
-  const audMatches = Array.isArray(aud) ? aud.includes(WORKER_AUDIENCE) : aud === WORKER_AUDIENCE;
-  if (!audMatches) throw new Error(`bad audience: ${JSON.stringify(aud)}`);
+  // The narrowed JWT is HS256-signed by THIS service (not Keycloak), so we
+  // verify against the shared HMAC secret. This is the production-shaped
+  // path — a Keycloak token-exchange v2 swap would replace `jwtVerify` with
+  // a JWKS lookup again, but the rest of the pipeline stays the same.
+  const { payload } = await jwtVerify(token, NARROWED_VERIFY_SECRET, {
+    issuer: NARROWED_EXPECTED_ISSUER,
+    audience: WORKER_AUDIENCE,
+  });
 
   const tenant_id = payload.tenant_id;
   if (typeof tenant_id !== 'string') throw new Error('tenant_id missing');
@@ -98,19 +100,23 @@ async function main() {
       return reply.code(403).send({ error: 'workflow_not_resolvable' });
     }
 
-    // Mint the narrowed token via token-exchange.
+    // Mint the narrowed JWT locally (HS256). See keycloak.ts for the rationale —
+    // Keycloak token-exchange v1 doesn't carry custom claims, and v2 needs a
+    // client-policy bundle that's outside this PoC's scope.
     let narrowed: { access_token: string; expires_in: number };
     try {
-      const subjectToken = await clientCredentialsLogin();
-      narrowed = await tokenExchange({
-        subjectToken,
+      narrowed = await mintNarrowedJwt({
         tenant_id: trustedTenantId,
         workflow_id: body.workflow_id,
         capabilities: ['tool:read-doc', 'tool:write-doc'],
+        sub: `pod:${saUser}`,
       });
     } catch (e) {
-      req.log.error({ err: String(e) }, 'token-exchange failed');
-      return reply.code(500).send({ error: 'token_exchange_failed' });
+      req.log.error({ err: String(e) }, 'narrowed-jwt mint failed');
+      return reply.code(500).send({
+        error: 'narrowed_jwt_mint_failed',
+        detail: String(e),
+      });
     }
 
     req.log.info(

@@ -128,28 +128,21 @@ echo "==> Wait for Postgres"
 kubectl -n "$NS" wait --for=condition=Ready pod -l app.kubernetes.io/name=postgresql --timeout=300s || true
 
 # Bitnami's initdb scripts only run on a *fresh* PVC. If the PVC already
-# existed from a previous install, new CREATE DATABASE statements in our SQL
-# would silently never apply — and Keycloak/Temporal would crashloop with
-# "database does not exist". Idempotently make sure the side databases exist
-# on every install.
-echo "==> Ensure side databases exist (keycloak, temporal, temporal_visibility)"
+# existed from a previous install, new SQL would silently never apply — roles,
+# side databases, RLS policies, anything. So re-run the migrations every time;
+# they're written to be idempotent (CREATE * IF NOT EXISTS, ON CONFLICT, etc).
+echo "==> Apply DB migrations (idempotent)"
 PG_POD=$(kubectl -n "$NS" get pod -l app.kubernetes.io/name=postgresql -o name | head -n1 | sed 's|pod/||' || true)
 if [[ -n "$PG_POD" ]]; then
-  for DB in keycloak temporal temporal_visibility; do
-    EXISTS=$(kubectl -n "$NS" exec "$PG_POD" -- env PGPASSWORD=change-me-postgres \
-      psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)
-    if [[ "$EXISTS" != "1" ]]; then
-      echo "    creating $DB"
-      kubectl -n "$NS" exec "$PG_POD" -- env PGPASSWORD=change-me-postgres \
-        psql -U postgres -c "CREATE DATABASE $DB"
-      # Bounce the dependent app so it picks up the now-existing DB.
-      case "$DB" in
-        keycloak) kubectl -n "$NS" rollout restart sts/keycloak-keycloakx 2>/dev/null || true ;;
-      esac
-    else
-      echo "    $DB already exists"
-    fi
+  for SQL in 001_init.sql 002_rls.sql 003_seed.sql; do
+    echo "    $SQL"
+    kubectl -n "$NS" exec -i "$PG_POD" -- env PGPASSWORD=change-me-postgres \
+      psql -U postgres -v ON_ERROR_STOP=1 < "$ROOT/db/$SQL" >/dev/null
   done
+  # If keycloak DB just got created, bounce Keycloak so it picks it up.
+  if ! kubectl -n "$NS" get pod -l app.kubernetes.io/name=keycloakx -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q Running; then
+    kubectl -n "$NS" rollout restart sts/keycloak-keycloakx 2>/dev/null || true
+  fi
 fi
 
 echo "==> Wait for Keycloak"

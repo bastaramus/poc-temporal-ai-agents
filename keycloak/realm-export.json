@@ -206,21 +206,6 @@
       "optionalClientScopes": []
     },
     {
-      "clientId": "internal-api-client",
-      "enabled": true,
-      "publicClient": false,
-      "secret": "internal-api-secret-change-me",
-      "serviceAccountsEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "standardFlowEnabled": false,
-      "attributes": {
-        "access.token.lifespan": "900",
-        "token.exchange.grant.enabled": "true"
-      },
-      "defaultClientScopes": ["basic", "roles", "web-origins", "acr"],
-      "optionalClientScopes": []
-    },
-    {
       "clientId": "worker-pod-client",
       "enabled": true,
       "publicClient": false,

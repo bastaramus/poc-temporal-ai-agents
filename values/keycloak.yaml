@@ -9,7 +9,6 @@ command:
 args:
   - "start-dev"
   - "--import-realm"
-  - "--features=token-exchange,admin-fine-grained-authz"
 
 # Postgres backend for Keycloak's own state.
 database:

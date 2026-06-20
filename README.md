@@ -3,14 +3,15 @@
 Minimal Kubernetes PoC of a multi-tenant agent platform that demonstrates two
 load-bearing security properties:
 
-1. **Keycloak token-exchange** — the internal-api-server mints a narrowed,
-   short-lived task JWT from a broader identity (tenant-scoped, capability-scoped,
-   15-minute TTL).
+1. **Server-minted narrowed JWT** — the internal-api-server mints a short-lived,
+   tenant-scoped, capability-scoped task JWT (15-min TTL, HS256). The pod never
+   sees the signing key. Production swap: Keycloak token-exchange v2 with
+   client-policies (the call sites stay identical).
 2. **Pod → api-server JWT auth** — the worker pod starts with **no tenant
    credentials**. To do anything tenant-scoped it must call `/bind-identity` on the
    internal-api-server, which authenticates the pod via its projected Kubernetes
-   ServiceAccount token and resolves `tenant_id` by reading the workflow input from
-   Temporal. The pod cannot self-declare which tenant it serves.
+   ServiceAccount token and resolves `tenant_id` by reading the workflow memo
+   from Temporal. The pod cannot self-declare which tenant it serves.
 
 > This PoC is the security-skeleton from `SUMBISSION.md` Section 1.
 
@@ -45,10 +46,9 @@ load-bearing security properties:
                     │ 1. k8s TokenReview — verify SA token         │
                     │ 2. DescribeWorkflowExecution(workflow_id)    │
                     │    read input → trusted tenant_id            │
-                    │ 3. Keycloak token-exchange:                  │
-                    │    subject_token  = service-account login    │
+                    │ 3. Mint narrowed JWT (HS256, in-process):    │
                     │    audience       = worker-pod-client        │
-                    │    extra claims   = tenant_id, workflow_id,  │
+                    │    claims         = tenant_id, workflow_id,  │
                     │                     capabilities[]           │
                     │ 4. return narrowed task JWT (15-min TTL)     │
                     └──────────────────────────────────────────────┘
@@ -126,49 +126,104 @@ podman machine stop      # also stops the cluster
 podman machine start
 ```
 
-## Get tokens
+## Run the tests with `make`
+
+> Prereq: `make pf` is running in another terminal so curl can reach
+> Keycloak (`:8080`), public-api (`:8081`), internal-api (`:8082`), and
+> Temporal UI (`:8088`).
+
+### Get a token
 
 ```sh
-# Alice belongs to tenant-a
-ALICE=$(./scripts/get-token-alice.sh)
-# Bob belongs to tenant-b
-BOB=$(./scripts/get-token-bob.sh)
+make token-alice         # prints Alice's JWT to stdout (tenant-a)
+make token-bob           # prints Bob's JWT to stdout (tenant-b)
 ```
 
-The tokens carry a `tenant_id` claim sourced from a custom Keycloak user attribute.
-
-## Happy-path tests
+The token carries a `tenant_id` claim sourced from a custom Keycloak user
+attribute. Decode it to inspect:
 
 ```sh
-# Alice writes a tenant-a document
-DOC_ID=$(./scripts/start-check.sh "$ALICE" write "hello" "tenant-a secret" | jq -r .document_id)
+make token-alice | jq -R 'split(".") | .[1] | @base64d | fromjson'
+```
 
-# Alice reads it back
-./scripts/start-check.sh "$ALICE" read "$DOC_ID"
+### Happy-path: write + read a document
+
+`write-alice` / `write-bob` start a workflow that mints a narrowed JWT, calls
+`/tools/write-doc`, and returns the new `document_id`. Variables
+`TITLE=` and `CONTENT=` override the defaults.
+
+```sh
+# Alice writes a tenant-a document, then reads it back
+make write-alice TITLE=hello CONTENT="tenant-a secret"
+# copy the document_id from the JSON response, then:
+make read-alice DOC=<that-uuid>
 
 # Bob does the same on tenant-b
-DOC_ID_B=$(./scripts/start-check.sh "$BOB" write "hi" "tenant-b secret" | jq -r .document_id)
-./scripts/start-check.sh "$BOB" read "$DOC_ID_B"
+make write-bob TITLE=hi CONTENT="tenant-b secret"
+make read-bob DOC=<that-uuid>
 ```
 
-## Cross-tenant denial test
+The `result.tenant_id` field in each response is **resolved server-side from
+the workflow memo** (set by public-api-server from the verified JWT) — proof
+that tenancy is not coming from the client request body.
+
+### Cross-tenant denial assertions
 
 ```sh
-./scripts/cross-tenant-deny-test.sh
+make test               # alias for `make deny-test`
 ```
 
-This script asserts four denials, each at the layer that blocked it:
+This runs `scripts/cross-tenant-deny-test.sh` end-to-end and asserts four
+denials, each at the layer that blocked it:
 
-1. Alice's `/start-check` body contains `"tenant_id": "tenant-b"` → public-api-server
-   ignores body, uses JWT claim. Workflow runs on `tenant-a` namespace.
-2. Alice's narrowed JWT replayed against a `document_id` that belongs to tenant-b →
-   internal-api-server: `BEGIN; SET LOCAL app.tenant_id='tenant-a'; SELECT ... WHERE id=$1`
-   returns zero rows because RLS filters out the tenant-b row. `audit_log` records
-   `decision=deny, reason=not_found_under_tenant`.
-3. Worker pod calls `/tools/read-doc` directly with its SA token → 401: tool endpoints
-   require a narrowed JWT, not an SA token.
-4. Worker pod tampers with the narrowed JWT (changes `tenant_id` claim) → JWKS
-   signature verification fails.
+1. Alice's `/start-check` body contains `"tenant_id": "tenant-b"` →
+   public-api-server ignores body, uses JWT claim. Workflow runs under
+   `tenant-a`'s memo.
+2. Alice's narrowed JWT replayed against a `document_id` that belongs to
+   tenant-b → internal-api-server: `BEGIN; SET LOCAL app.tenant_id='tenant-a';
+   SELECT ... WHERE id=$1` returns zero rows because RLS filters out the
+   tenant-b row. `audit_log` records `decision=deny,
+   reason=not_found_under_tenant`.
+3. Worker pod calls `/tools/read-doc` directly with its SA token → 401: tool
+   endpoints require a narrowed JWT, not an SA token.
+4. Worker pod tampers with the narrowed JWT (changes `tenant_id` claim) →
+   HMAC signature verification fails.
+
+### Inspect the audit trail
+
+Every successful tool call writes an `audit_log` row, and every RLS-filtered
+denial does too. `make audit-tail` runs a `SELECT` under tenant-a's GUC:
+
+```sh
+make audit-tail
+```
+
+If you want a different tenant or a free-form query:
+
+```sh
+make psql                # opens psql as app_runtime against the poc DB
+# then inside psql:
+BEGIN; SET LOCAL app.tenant_id = '22222222-2222-2222-2222-222222222222';
+SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10; COMMIT;
+```
+
+### Watch a workflow
+
+```sh
+make temporal-ui         # opens http://localhost:8088 in your browser
+```
+
+Click `StartCheckWorkflow` to see the activities (BindIdentity, write-doc /
+read-doc), each event payload, and any failures with full stack traces.
+
+### See logs while testing
+
+```sh
+# In separate terminals (or as k9s panes):
+make logs-public         # public-api-server
+make logs-internal       # internal-api-server (SET LOCAL + audit writes)
+make logs-worker         # Temporal worker (activity executions)
+```
 
 ## How tenant isolation works (defense in depth)
 
@@ -183,23 +238,38 @@ This script asserts four denials, each at the layer that blocked it:
 
 If any single layer fails, the next layer still blocks the access.
 
-## How token exchange works in this repo
+## How the narrowed JWT works in this repo
 
-`keycloak/realm-export.json` enables RFC 8693 token-exchange:
+`internal-api-server` is BOTH issuer and verifier for the narrowed task JWT.
+The signing key is an HMAC secret (`NARROWED_SIGNING_SECRET`, 32+ bytes) that
+never leaves the api-server's process — the pod never sees it, only consumes
+the token it receives from `/bind-identity`.
 
-- `internal-api-client` is a confidential client allowed to call the
-  `urn:ietf:params:oauth:grant-type:token-exchange` grant.
-- It targets `worker-pod-client` as the `audience` of the issued narrowed token.
-- Custom claims (`tenant_id`, `workflow_id`, `capabilities`) are added by the
-  internal-api-server and merged via the
-  `urn:ietf:params:oauth:token-type:access_token` request.
+Token shape (HS256, ~15-min TTL):
 
-The implementation lives at `services/internal-api-server/src/keycloak.ts`.
+```
+{
+  "iss": "internal-api-server",
+  "aud": "worker-pod-client",
+  "sub": "pod:<sa-username>",
+  "tenant_id": "<resolved from Temporal memo>",
+  "workflow_id": "<temporal workflow id>",
+  "capabilities": ["tool:read-doc", "tool:write-doc"],
+  "iat": ..., "exp": ..., "jti": "..."
+}
+```
 
-For the PoC the `subject_token` is the internal-api-server's own service-account
-access token. In production the better pattern is to start from the user's JWT
-and add tenant/workflow constraints via token-exchange — the structure of the
-call is the same.
+Implementation: `services/internal-api-server/src/narrowed-jwt.ts`.
+
+**Why not Keycloak token-exchange?** Keycloak v1 token-exchange (RFC 8693)
+narrows the audience but does not carry arbitrary custom claims —
+`tenant_id`/`workflow_id`/`capabilities` would need a per-claim Keycloak
+protocol-mapper or a script-mapper, both deprecated/awkward in 26. Keycloak v2
+supports it via client-policies, but that's a heavier setup than this PoC
+needs. The in-process mint produces an identical token shape, so the
+production swap is local: replace `mintNarrowedJwt`/`verifyNarrowedJwt` with
+calls to Keycloak's exchange endpoint + JWKS verify; the `/bind-identity` and
+`/tools/*` call sites are unchanged.
 
 ## How BindIdentity prevents pod self-declared tenant
 
@@ -266,7 +336,7 @@ previous tenant's setting to the next pooled checkout.
 |---|---|
 | Single worker Deployment polling one shared `agent-tasks` queue | Warm pool of pods on the same shared queue, KEDA-scaled by queue depth (per-tenant queues only when a tenant has paid for tier-isolated capacity) |
 | One Postgres role for runtime | Per-tenant DB role or per-tenant schema |
-| Subject token in token-exchange = service-account login | Subject token = end-user JWT, narrowed by exchange |
+| Narrowed JWT minted by internal-api-server (HS256) | Keycloak token-exchange v2 with client-policies (same token shape, swap implementation only) |
 | In-process audit_log writes | Append-only WORM bucket (S3 Object Lock) |
 | No NetworkPolicies | Default-deny + per-tier egress allowlists |
 | No gVisor / Kata | gVisor on the agent runtime (untrusted code paths) |
@@ -292,15 +362,15 @@ previous tenant's setting to the next pooled checkout.
 ## Exact commands
 
 ```sh
-./scripts/bootstrap-cluster.sh                   # one-time
-./scripts/install.sh                             # build + helmfile apply
-./scripts/port-forward.sh                        # in another terminal
-ALICE=$(./scripts/get-token-alice.sh)
-BOB=$(./scripts/get-token-bob.sh)
-./scripts/start-check.sh "$ALICE" write "hi" "tenant-a"
-./scripts/start-check.sh "$ALICE" read "<doc_id>"
-./scripts/cross-tenant-deny-test.sh
+make bootstrap                                   # one-time
+make install                                     # build + helmfile apply
+make pf                                          # in another terminal
+make write-alice TITLE=hi CONTENT="tenant-a"     # → returns document_id
+make read-alice  DOC=<document_id>
+make test                                        # cross-tenant denial assertions
 ```
+
+`make help` lists every target with a one-line description.
 
 ## Troubleshooting (macOS-specific)
 

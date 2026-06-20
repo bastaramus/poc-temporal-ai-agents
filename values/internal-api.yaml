@@ -20,13 +20,6 @@ serviceAccount:
   name: internal-api-sa
 
 env:
-  # Issuer is pinned to localhost:8080 so the same JWT validates whether it
-  # was minted via port-forward or in-cluster (see values/keycloak.yaml).
-  KEYCLOAK_ISSUER: http://localhost:8080/realms/agent-poc
-  KEYCLOAK_JWKS_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/certs
-  KEYCLOAK_TOKEN_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/token
-  INTERNAL_CLIENT_ID: internal-api-client
-  INTERNAL_CLIENT_SECRET: internal-api-secret-change-me  # TODO: External Secrets
   WORKER_AUDIENCE: worker-pod-client
   TEMPORAL_HOST: temporal-frontend.agent-poc.svc.cluster.local:7233
   TEMPORAL_NAMESPACE: default
@@ -38,3 +31,8 @@ env:
   PORT: "8080"
   ## Allow this SA name to call /bind-identity. Multiple SAs comma-separated.
   ALLOWED_WORKER_SAS: "system:serviceaccount:agent-poc:worker-sa"
+  ## Narrowed-JWT signing. Same secret signs the issued JWT and verifies it
+  ## back at /tools/* — only one process holds it. TODO: External Secrets in prod.
+  NARROWED_SIGNING_SECRET: "narrowed-jwt-shared-secret-change-me"
+  NARROWED_ISSUER: "internal-api-server"
+  NARROWED_TTL_SECONDS: "900"

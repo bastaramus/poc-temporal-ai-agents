@@ -15,9 +15,7 @@ keycloak:
   port: 8080
   realm: agent-poc
   publicApiClientId: public-api-client
-  internalApiClientId: internal-api-client
-  internalApiClientSecret: internal-api-secret-change-me
-  workerPodClientId: worker-pod-client
+  workerPodClientId: worker-pod-client   # narrowed-JWT audience only; no client login
 
 temporal:
   host: temporal-frontend.agent-poc.svc.cluster.local
