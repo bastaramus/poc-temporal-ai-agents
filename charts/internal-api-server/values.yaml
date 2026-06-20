@@ -1,5 +1,5 @@
 image:
-  repository: poc/internal-api-server
+  repository: localhost/poc/internal-api-server
   tag: dev
   pullPolicy: IfNotPresent
 

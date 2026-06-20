@@ -37,8 +37,20 @@ status: ## show cluster + podman machine status
 	@echo "── pods ──";           kubectl -n $(NS) get pods 2>/dev/null || true
 
 # ── Build / deploy ─────────────────────────────────────────────────────
-install: ## build images, helmfile apply
+install: ## build images, push to cluster, helmfile apply
 	./scripts/install.sh
+
+install-no-build: ## install but skip podman build (reuse existing images)
+	./scripts/install.sh --skip-build
+
+install-no-load: ## install but skip pushing images into the cluster
+	./scripts/install.sh --skip-load
+
+install-helm-only: ## skip build AND push — only re-apply ConfigMaps + helmfile
+	./scripts/install.sh --skip-build --skip-load
+
+install-build-only: ## only build + push images, skip helmfile apply
+	./scripts/install.sh --skip-helm
 
 build: ## build images in podman, then `minikube image load` into the cluster
 	@ARCH=$$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || echo amd64); \
@@ -142,7 +154,8 @@ clean-images: ## remove poc/* images from the cluster and the local podman machi
 	-minikube image rm poc/public-api-server:dev poc/internal-api-server:dev poc/worker:dev
 	-podman image rm -f poc/public-api-server:dev poc/internal-api-server:dev poc/worker:dev
 
-.PHONY: help bootstrap up down nuke status install build apply destroy \
+.PHONY: help bootstrap up down nuke status install install-no-build install-no-load \
+        install-helm-only install-build-only build apply destroy \
         pf port-forward k9s logs-public logs-internal logs-worker logs-keycloak restart \
         token-alice token-bob write-alice write-bob read-alice read-bob \
         test deny-test psql psql-owner audit-tail temporal-ui clean-images

@@ -10,9 +10,6 @@
   "bruteForceProtected": true,
   "accessTokenLifespan": 900,
 
-  "_comment_token_exchange":
-    "Token-exchange (RFC 8693) is enabled by passing --features=token-exchange to kc.sh start-dev. The internal-api-client below is permitted to exchange.",
-
   "attributes": {
     "frontendUrl": ""
   },
@@ -63,11 +60,8 @@
       "attributes": {
         "access.token.lifespan": "900"
       },
-      "defaultClientScopes": ["tenant"],
-      "_comment":
-        "End-user JWTs target this client as audience. Tokens carry sub, preferred_username, email, tenant_id."
+      "defaultClientScopes": ["tenant"]
     },
-
     {
       "clientId": "internal-api-client",
       "enabled": true,
@@ -79,11 +73,8 @@
       "attributes": {
         "access.token.lifespan": "900",
         "token.exchange.grant.enabled": "true"
-      },
-      "_comment":
-        "This client is the only one allowed to call token-exchange. Its service account login produces the subject_token; the exchange narrows it to worker-pod-client with extra claims."
+      }
     },
-
     {
       "clientId": "worker-pod-client",
       "enabled": true,
@@ -94,9 +85,7 @@
       "directAccessGrantsEnabled": false,
       "attributes": {
         "access.token.lifespan": "900"
-      },
-      "_comment":
-        "Audience of the narrowed task JWT. Pods never authenticate as this client; they only RECEIVE tokens whose `aud` is this client. The internal-api-server validates this audience on tool calls."
+      }
     }
   ],
 

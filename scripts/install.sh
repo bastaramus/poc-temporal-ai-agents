@@ -8,75 +8,160 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NS="agent-poc"
 
+# ── Flags ──────────────────────────────────────────────────────────────
+# Skip stages individually when iterating. Examples:
+#   ./scripts/install.sh --skip-build          # don't rebuild images
+#   ./scripts/install.sh --skip-load           # build but don't push to cluster
+#   ./scripts/install.sh --skip-build --skip-load   # only re-apply helm/configmaps
+#   ./scripts/install.sh --skip-helm           # only build/push, no helmfile apply
+# Env-var equivalents (handy for `make` overrides): SKIP_BUILD=1 SKIP_LOAD=1 SKIP_HELM=1
+SKIP_BUILD="${SKIP_BUILD:-0}"
+SKIP_LOAD="${SKIP_LOAD:-0}"
+SKIP_HELM="${SKIP_HELM:-0}"
+
+usage() {
+  cat <<EOF
+Usage: $0 [--skip-build] [--skip-load] [--skip-helm] [-h|--help]
+
+  --skip-build   skip podman build of the three service images
+  --skip-load    skip pushing images into the minikube cluster
+  --skip-helm    skip namespace+configmaps+helmfile apply
+
+Env vars: SKIP_BUILD=1, SKIP_LOAD=1, SKIP_HELM=1 (same effect).
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-build) SKIP_BUILD=1 ;;
+    --skip-load)  SKIP_LOAD=1 ;;
+    --skip-helm)  SKIP_HELM=1 ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            echo "unknown flag: $1" >&2; usage; exit 1 ;;
+  esac
+  shift
+done
+
 require() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing tool: $1"; exit 1; }
 }
-require podman
 require minikube
 require kubectl
 require helm
 require helmfile
+[[ "$SKIP_BUILD" == 1 ]] || require podman
 
 if ! minikube status --format '{{.Host}}' 2>/dev/null | grep -q Running; then
   echo "minikube is not running. Run scripts/bootstrap-cluster.sh first." >&2
   exit 1
 fi
 
-echo "==> Build service images in the rootful podman machine"
-# `minikube podman-env` only works for clusters running the `crio` runtime;
-# this cluster uses `containerd`, so we build locally (against the user's
-# existing rootful podman machine) and then ship the images into the cluster
-# with `minikube image load`. That works for any container runtime.
-#
-# Detect the cluster node arch (arm64 on Apple Silicon, amd64 on Intel) and
-# build for that — `minikube image load` rejects mismatched-arch tarballs.
-NODE_ARCH=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || echo amd64)
-PLATFORM="${PODMAN_PLATFORM:-linux/${NODE_ARCH}}"
-echo "    platform: $PLATFORM"
-podman build --platform "$PLATFORM" -t poc/public-api-server:dev   "$ROOT/services/public-api-server"
-podman build --platform "$PLATFORM" -t poc/internal-api-server:dev "$ROOT/services/internal-api-server"
-podman build --platform "$PLATFORM" -t poc/worker:dev              "$ROOT/temporal/worker"
+if [[ "$SKIP_BUILD" == 1 ]]; then
+  echo "==> [skipped] Build service images"
+else
+  echo "==> Build service images in the rootful podman machine"
+  # `minikube podman-env` only works for clusters running the `crio` runtime;
+  # this cluster uses `containerd`, so we build locally (against the user's
+  # existing rootful podman machine) and then ship the images into the cluster
+  # with `minikube image load`. That works for any container runtime.
+  #
+  # Detect the cluster node arch (arm64 on Apple Silicon, amd64 on Intel) and
+  # build for that — `minikube image load` rejects mismatched-arch tarballs.
+  NODE_ARCH=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || echo amd64)
+  PLATFORM="${PODMAN_PLATFORM:-linux/${NODE_ARCH}}"
+  echo "    platform: $PLATFORM"
+  podman build --platform "$PLATFORM" -t poc/public-api-server:dev   "$ROOT/services/public-api-server"
+  podman build --platform "$PLATFORM" -t poc/internal-api-server:dev "$ROOT/services/internal-api-server"
+  podman build --platform "$PLATFORM" -t poc/worker:dev              "$ROOT/temporal/worker"
+fi
 
-echo "==> Push images into the cluster"
-# `minikube image load` accepts a tarball on stdin and works regardless of
-# the cluster's container runtime (containerd, crio, docker).
-podman save poc/public-api-server:dev   | minikube image load -
-podman save poc/internal-api-server:dev | minikube image load -
-podman save poc/worker:dev              | minikube image load -
+if [[ "$SKIP_LOAD" == 1 ]]; then
+  echo "==> [skipped] Push images into the cluster"
+else
+  echo "==> Push images into the cluster"
+  # `minikube image load` accepts a tarball on stdin and works regardless of
+  # the cluster's container runtime (containerd, crio, docker).
+  podman save poc/public-api-server:dev   | minikube image load -
+  podman save poc/internal-api-server:dev | minikube image load -
+  podman save poc/worker:dev              | minikube image load -
+fi
 
-echo "==> Create namespace"
-kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+if [[ "$SKIP_HELM" == 1 ]]; then
+  echo "==> [skipped] Namespace + ConfigMaps + helmfile apply"
+else
+  echo "==> Create namespace"
+  kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
-echo "==> ConfigMap: Postgres migrations"
-kubectl -n "$NS" create configmap poc-migrations \
-  --from-file="$ROOT/db/001_init.sql" \
-  --from-file="$ROOT/db/002_rls.sql" \
-  --from-file="$ROOT/db/003_seed.sql" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  echo "==> ConfigMap: Postgres migrations"
+  kubectl -n "$NS" create configmap poc-migrations \
+    --from-file="$ROOT/db/001_init.sql" \
+    --from-file="$ROOT/db/002_rls.sql" \
+    --from-file="$ROOT/db/003_seed.sql" \
+    --dry-run=client -o yaml | kubectl apply -f -
 
-echo "==> ConfigMap: Keycloak realm"
-kubectl -n "$NS" create configmap keycloak-realm \
-  --from-file="$ROOT/keycloak/realm-export.json" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  echo "==> ConfigMap: Keycloak realm"
+  kubectl -n "$NS" create configmap keycloak-realm \
+    --from-file="$ROOT/keycloak/realm-export.json" \
+    --dry-run=client -o yaml | kubectl apply -f -
 
-echo "==> helmfile apply"
-cd "$ROOT"
-helmfile apply --skip-diff-on-install
+  echo "==> helmfile apply"
+  cd "$ROOT"
+  helmfile apply --skip-diff-on-install
+fi
 
 echo
-echo "==> Wait for core pods (this can take 3-5 minutes on first run)"
+echo "==> Wait for Postgres"
 kubectl -n "$NS" wait --for=condition=Ready pod -l app.kubernetes.io/name=postgresql --timeout=300s || true
-kubectl -n "$NS" wait --for=condition=Ready pod -l app.kubernetes.io/name=keycloakx   --timeout=300s || true
+
+# Bitnami's initdb scripts only run on a *fresh* PVC. If the PVC already
+# existed from a previous install, new CREATE DATABASE statements in our SQL
+# would silently never apply — and Keycloak/Temporal would crashloop with
+# "database does not exist". Idempotently make sure the side databases exist
+# on every install.
+echo "==> Ensure side databases exist (keycloak, temporal, temporal_visibility)"
+PG_POD=$(kubectl -n "$NS" get pod -l app.kubernetes.io/name=postgresql -o name | head -n1 | sed 's|pod/||' || true)
+if [[ -n "$PG_POD" ]]; then
+  for DB in keycloak temporal temporal_visibility; do
+    EXISTS=$(kubectl -n "$NS" exec "$PG_POD" -- env PGPASSWORD=change-me-postgres \
+      psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null || true)
+    if [[ "$EXISTS" != "1" ]]; then
+      echo "    creating $DB"
+      kubectl -n "$NS" exec "$PG_POD" -- env PGPASSWORD=change-me-postgres \
+        psql -U postgres -c "CREATE DATABASE $DB"
+      # Bounce the dependent app so it picks up the now-existing DB.
+      case "$DB" in
+        keycloak) kubectl -n "$NS" rollout restart sts/keycloak-keycloakx 2>/dev/null || true ;;
+      esac
+    else
+      echo "    $DB already exists"
+    fi
+  done
+fi
+
+echo "==> Wait for Keycloak"
+kubectl -n "$NS" wait --for=condition=Ready pod -l app.kubernetes.io/name=keycloakx --timeout=300s || true
 
 echo
 echo "==> Temporal namespace"
-# Single shared 'default' namespace — most Temporal Helm charts auto-create it
-# during schema setup. If your chart doesn't, exec into admintools and run:
-#   tctl --ns default namespace register --rd 1
+# Single shared 'default' namespace.
+#   admintools >= 1.30 ships the new `temporal` CLI (no tctl).
+#   admintools <  1.30 ships only `tctl`.
+# We try the new one first and fall back. The frontend is reachable in-cluster
+# at temporal-frontend:7233.
 ADMIN=$(kubectl -n "$NS" get pod -l app.kubernetes.io/component=admintools -o name | head -n1 || true)
 if [[ -n "$ADMIN" ]]; then
-  kubectl -n "$NS" exec "$ADMIN" -- tctl --ns default namespace describe >/dev/null 2>&1 \
-    || kubectl -n "$NS" exec "$ADMIN" -- tctl --ns default namespace register --rd 1 || true
+  if kubectl -n "$NS" exec "$ADMIN" -- which temporal >/dev/null 2>&1; then
+    kubectl -n "$NS" exec "$ADMIN" -- \
+      temporal --address temporal-frontend:7233 operator namespace describe default >/dev/null 2>&1 \
+      || kubectl -n "$NS" exec "$ADMIN" -- \
+        temporal --address temporal-frontend:7233 operator namespace create \
+          --retention 24h default || true
+  elif kubectl -n "$NS" exec "$ADMIN" -- which tctl >/dev/null 2>&1; then
+    kubectl -n "$NS" exec "$ADMIN" -- tctl --ns default namespace describe >/dev/null 2>&1 \
+      || kubectl -n "$NS" exec "$ADMIN" -- tctl --ns default namespace register --rd 1 || true
+  else
+    echo "    (no temporal/tctl CLI in admintools — namespace 'default' is usually auto-registered by the chart)"
+  fi
 fi
 
 echo

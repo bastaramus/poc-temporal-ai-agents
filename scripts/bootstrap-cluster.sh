@@ -19,6 +19,12 @@ require helm
 require helmfile
 require jq
 
+# helmfile uses `helm diff` under the hood. Install on first run, no-op after.
+if ! helm plugin list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx diff; then
+  echo "==> Installing helm-diff plugin"
+  helm plugin install https://github.com/databus23/helm-diff --verify=false
+fi
+
 echo "==> podman machine"
 if ! podman machine list --format '{{.Name}} {{.Running}}' | grep -q 'true'; then
   if ! podman machine list --format '{{.Name}}' | grep -q .; then

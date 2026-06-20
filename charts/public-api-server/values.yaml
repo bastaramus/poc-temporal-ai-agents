@@ -1,5 +1,5 @@
 image:
-  repository: poc/public-api-server
+  repository: localhost/poc/public-api-server
   tag: dev
   pullPolicy: IfNotPresent
 

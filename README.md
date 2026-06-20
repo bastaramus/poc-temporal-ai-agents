@@ -12,9 +12,7 @@ load-bearing security properties:
    ServiceAccount token and resolves `tenant_id` by reading the workflow input from
    Temporal. The pod cannot self-declare which tenant it serves.
 
-> This PoC is the security-skeleton from `SUMBISSION.md` Section 1. Warm pool,
-> KEDA, Karpenter, gVisor, NetworkPolicy, OTel propagation, evidence WORM — out of
-> scope here. See "Production hardening" at the bottom.
+> This PoC is the security-skeleton from `SUMBISSION.md` Section 1.
 
 ## Architecture (ASCII)
 
@@ -78,8 +76,7 @@ load-bearing security properties:
 
 ## Prerequisites (macOS, no Docker Desktop)
 
-The PoC runs on **minikube** (with the **podman** driver) and uses **k9s** as
-the cluster TUI. All tools come from Homebrew:
+The PoC runs on **minikube** (with the **podman** driver). All tools come from Homebrew:
 
 ```sh
 brew install podman minikube kubectl helm helmfile k9s jq curl
@@ -107,7 +104,10 @@ make install
 # 3. In another terminal — port-forwards for curl-based tests.
 make pf
 
-# 4. Or drive the cluster with k9s (recommended).
+# Check. status
+make status
+
+# 4. Overview it:
 k9s
 ```
 

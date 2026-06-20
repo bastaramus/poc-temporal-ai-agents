@@ -1,5 +1,6 @@
 image:
-  repository: poc/worker
+  # See note in values/public-api.yaml about the `localhost/` prefix.
+  repository: localhost/poc/worker
   tag: dev
   pullPolicy: IfNotPresent
 

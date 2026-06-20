@@ -1,5 +1,5 @@
 image:
-  repository: poc/worker
+  repository: localhost/poc/worker
   tag: dev
   pullPolicy: IfNotPresent
 

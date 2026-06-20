@@ -1,5 +1,6 @@
 image:
-  repository: poc/internal-api-server
+  # See note in values/public-api.yaml about the `localhost/` prefix.
+  repository: localhost/poc/internal-api-server
   tag: dev
   pullPolicy: IfNotPresent
 
@@ -19,7 +20,9 @@ serviceAccount:
   name: internal-api-sa
 
 env:
-  KEYCLOAK_ISSUER: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc
+  # Issuer is pinned to localhost:8080 so the same JWT validates whether it
+  # was minted via port-forward or in-cluster (see values/keycloak.yaml).
+  KEYCLOAK_ISSUER: http://localhost:8080/realms/agent-poc
   KEYCLOAK_JWKS_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/certs
   KEYCLOAK_TOKEN_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/token
   INTERNAL_CLIENT_ID: internal-api-client

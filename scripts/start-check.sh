@@ -19,7 +19,17 @@ else
   echo "unknown mode $MODE" >&2; exit 1
 fi
 
-curl -sf -X POST "$API/start-check" \
+RESP=$(curl -s -w "\n__HTTP__%{http_code}" -X POST "$API/start-check" \
   -H "authorization: Bearer $JWT" \
   -H "content-type: application/json" \
-  -d "$BODY" | jq .
+  -d "$BODY")
+HTTP=${RESP##*__HTTP__}
+BODY_OUT=${RESP%__HTTP__*}
+
+if [[ "$HTTP" =~ ^2 ]]; then
+  echo "$BODY_OUT" | jq .
+else
+  echo "HTTP $HTTP" >&2
+  echo "$BODY_OUT" >&2
+  exit 1
+fi

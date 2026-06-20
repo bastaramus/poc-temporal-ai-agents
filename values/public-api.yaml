@@ -1,5 +1,8 @@
 image:
-  repository: poc/public-api-server
+  # Podman+minikube store loaded images under the `localhost/` registry
+  # prefix; the deployment must reference them under that exact name or
+  # kubelet falls through to docker.io.
+  repository: localhost/poc/public-api-server
   tag: dev
   pullPolicy: IfNotPresent
 
@@ -15,7 +18,9 @@ resources:
     memory: 256Mi
 
 env:
-  KEYCLOAK_ISSUER: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc
+  # Issuer is pinned to localhost:8080 so the same JWT validates whether it
+  # was minted via port-forward or in-cluster (see values/keycloak.yaml).
+  KEYCLOAK_ISSUER: http://localhost:8080/realms/agent-poc
   KEYCLOAK_JWKS_URL: http://keycloak-keycloakx-http.agent-poc.svc.cluster.local:8080/realms/agent-poc/protocol/openid-connect/certs
   EXPECTED_AUDIENCE: public-api-client
   TEMPORAL_HOST: temporal-frontend.agent-poc.svc.cluster.local:7233

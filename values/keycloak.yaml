@@ -21,16 +21,27 @@ database:
   password: change-me-postgres
   # TODO: switch to existingSecret in production.
 
-# Admin bootstrap + dev runtime tweaks. The string-template format is what
-# keycloakx 7 expects — yes, including the leading dash.
+# Admin bootstrap + dev runtime tweaks.
 # NOTE: KC_HTTP_ENABLED and KC_PROXY_HEADERS are set by the chart itself, so
 # don't add them here — Kubernetes rejects duplicate env keys.
+#
+# Issuer pinning. Without KC_HOSTNAME, Keycloak builds the `iss` claim from
+# the request's Host header — so a token fetched at localhost:8080 carries
+# `iss=http://localhost:8080/...` and a token fetched in-cluster carries
+# the cluster DNS. Our services must validate against ONE issuer string, so
+# we pin the hostname here AND in the services' EXPECTED_ISSUER env. The
+# JWKS fetch URL still uses the in-cluster DNS so services don't need to
+# reach localhost.
 extraEnv: |
   - name: KEYCLOAK_ADMIN
     value: admin
   - name: KEYCLOAK_ADMIN_PASSWORD
     value: admin
+  - name: KC_HOSTNAME
+    value: "http://localhost:8080"
   - name: KC_HOSTNAME_STRICT
+    value: "false"
+  - name: KC_HOSTNAME_STRICT_BACKCHANNEL
     value: "false"
 
 # Mount the realm-import ConfigMap into /opt/keycloak/data/import — kc start-dev
