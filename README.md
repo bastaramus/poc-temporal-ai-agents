@@ -1,5 +1,25 @@
 # poc-temporal-ai-agents
 
+## About this repo
+
+This repository was produced as part of an interview process for a **Lead
+Platform & Infrastructure Engineer** role (the company is intentionally not
+named here). It contains two artifacts:
+
+> **🟡 The actual answer to the home task lives in [`SUBMISSION.md`](./SUBMISSION.md).**
+> That document is the primary deliverable — architecture sketch, pitfall matrix,
+> ADR, cost model, sequencing, threat model, and the explicit list of things I'd
+> refuse to build. **Read `SUBMISSION.md` first.** Everything in this repo exists
+> to support and validate the design described there.
+
+The lab environment in this repo is a **proof-of-concept** that demonstrates the
+two load-bearing security properties from `SUBMISSION.md` are buildable and work
+end-to-end on a small local Kubernetes cluster:
+
+---
+
+## What the PoC demonstrates
+
 Minimal Kubernetes PoC of a multi-tenant agent platform that demonstrates two
 load-bearing security properties:
 
@@ -13,7 +33,7 @@ load-bearing security properties:
    ServiceAccount token and resolves `tenant_id` by reading the workflow memo
    from Temporal. The pod cannot self-declare which tenant it serves.
 
-> This PoC is the security-skeleton from `SUMBISSION.md` Section 1.
+> This PoC is the security-skeleton from `SUBMISSION.md` Section 1.
 
 ## Architecture (ASCII)
 
@@ -317,7 +337,7 @@ previous tenant's setting to the next pooled checkout.
 
 - **One shared Temporal namespace** (`default`) and **one shared task queue**
   (`agent-tasks`). The tenant boundary lives in JWT + memo + RLS, not in
-  Temporal routing. SUMBISSION.md §7 refuses operator-driven per-tenant
+  Temporal routing. SUBMISSION.md §7 refuses operator-driven per-tenant
   infrastructure (CRDs, namespaces, proxies) — per-tenant Temporal namespaces
   are the same shape of complexity.
 - Tenant scoping comes from the **workflow memo** (`memo.tenant_id`), set
