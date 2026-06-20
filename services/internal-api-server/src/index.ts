@@ -34,7 +34,13 @@ async function verifyNarrowedJwt(authz: string | undefined) {
       : Array.isArray(payload.capabilities)
         ? (payload.capabilities as string[])
         : [];
-  return { tenant_id, workflow_id, capabilities, sub: String(payload.sub ?? 'pod') };
+  const sub =
+    typeof payload.sub === 'string'
+      ? payload.sub
+      : typeof payload.preferred_username === 'string'
+        ? (payload.preferred_username as string)
+        : 'pod';
+  return { tenant_id, workflow_id, capabilities, sub };
 }
 
 async function main() {

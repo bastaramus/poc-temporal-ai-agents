@@ -93,6 +93,9 @@ restart: ## rolling-restart the three services (keep config + DB)
 	kubectl -n $(NS) rollout restart deploy/internal-api-server
 	kubectl -n $(NS) rollout restart deploy/worker
 
+reimport-realm: ## drop+recreate keycloak DB so realm-export.json is re-applied
+	./scripts/reimport-realm.sh
+
 # ── Tokens ─────────────────────────────────────────────────────────────
 token-alice: ## print Alice's JWT (tenant-a)
 	@./scripts/get-token-alice.sh
@@ -156,6 +159,7 @@ clean-images: ## remove poc/* images from the cluster and the local podman machi
 
 .PHONY: help bootstrap up down nuke status install install-no-build install-no-load \
         install-helm-only install-build-only build apply destroy \
-        pf port-forward k9s logs-public logs-internal logs-worker logs-keycloak restart \
+        pf port-forward k9s logs-public logs-internal logs-worker logs-keycloak \
+        restart reimport-realm \
         token-alice token-bob write-alice write-bob read-alice read-bob \
         test deny-test psql psql-owner audit-tail temporal-ui clean-images

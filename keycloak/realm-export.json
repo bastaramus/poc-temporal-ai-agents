@@ -23,9 +23,151 @@
 
   "clientScopes": [
     {
-      "name": "tenant",
+      "name": "basic",
+      "description": "OpenID Connect built-in scope: basic",
       "protocol": "openid-connect",
-      "attributes": { "include.in.token.scope": "true" },
+      "attributes": { "include.in.token.scope": "false", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": { "id.token.claim": "true", "access.token.claim": "true" }
+        },
+        {
+          "name": "auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "AUTH_TIME",
+            "claim.name": "auth_time",
+            "jsonType.label": "long",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "profile",
+      "description": "OpenID Connect built-in scope: profile",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "true", "consent.screen.text": "${profileScopeConsentText}" },
+      "protocolMappers": [
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "given name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "firstName",
+            "claim.name": "given_name",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "family name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "lastName",
+            "claim.name": "family_name",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "description": "OpenID Connect built-in scope: email",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "true", "consent.screen.text": "${emailScopeConsentText}" },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "email",
+            "claim.name": "email",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "roles",
+      "description": "OpenID Connect scope for adding user realm roles to the access token",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "false", "display.on.consent.screen": "true", "consent.screen.text": "${rolesScopeConsentText}" },
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "multivalued": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "web-origins",
+      "description": "OpenID Connect scope for adding allowed web origins to the access token",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "false", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "allowed web origins",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-allowed-origins-mapper",
+          "config": {}
+        }
+      ]
+    },
+    {
+      "name": "acr",
+      "description": "OpenID Connect scope for adding acr (authentication context class reference) to the token",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "false", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "acr loa level",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-acr-mapper",
+          "config": { "id.token.claim": "true", "access.token.claim": "true" }
+        }
+      ]
+    },
+    {
+      "name": "tenant",
+      "description": "PoC scope: emits tenant_id from the user attribute",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" },
       "protocolMappers": [
         {
           "name": "tenant_id",
@@ -44,7 +186,7 @@
     }
   ],
 
-  "defaultDefaultClientScopes": ["tenant"],
+  "defaultDefaultClientScopes": ["basic", "profile", "email", "roles", "web-origins", "acr", "tenant"],
   "defaultOptionalClientScopes": [],
 
   "clients": [
@@ -60,7 +202,8 @@
       "attributes": {
         "access.token.lifespan": "900"
       },
-      "defaultClientScopes": ["tenant"]
+      "defaultClientScopes": ["basic", "profile", "email", "roles", "web-origins", "acr", "tenant"],
+      "optionalClientScopes": []
     },
     {
       "clientId": "internal-api-client",
@@ -73,7 +216,9 @@
       "attributes": {
         "access.token.lifespan": "900",
         "token.exchange.grant.enabled": "true"
-      }
+      },
+      "defaultClientScopes": ["basic", "roles", "web-origins", "acr"],
+      "optionalClientScopes": []
     },
     {
       "clientId": "worker-pod-client",
@@ -85,7 +230,9 @@
       "directAccessGrantsEnabled": false,
       "attributes": {
         "access.token.lifespan": "900"
-      }
+      },
+      "defaultClientScopes": ["basic", "roles", "web-origins", "acr", "tenant"],
+      "optionalClientScopes": []
     }
   ],
 

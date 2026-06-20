@@ -77,6 +77,7 @@ fi
 
 if [[ "$SKIP_LOAD" == 1 ]]; then
   echo "==> [skipped] Push images into the cluster"
+  RELOADED=0
 else
   echo "==> Push images into the cluster"
   # `minikube image load` accepts a tarball on stdin and works regardless of
@@ -84,6 +85,7 @@ else
   podman save poc/public-api-server:dev   | minikube image load -
   podman save poc/internal-api-server:dev | minikube image load -
   podman save poc/worker:dev              | minikube image load -
+  RELOADED=1
 fi
 
 if [[ "$SKIP_HELM" == 1 ]]; then
@@ -107,6 +109,18 @@ else
   echo "==> helmfile apply"
   cd "$ROOT"
   helmfile apply --skip-diff-on-install
+fi
+
+# `helmfile apply` only restarts a Deployment when the rendered manifest
+# changes; rebuilt images with the same :dev tag don't change the manifest.
+# Force a rollout so the cluster actually picks up the freshly-loaded image.
+# Skipped when images weren't reloaded (no point bouncing pods that have
+# nothing new to pull) or when the user passed --skip-helm.
+if [[ "${RELOADED:-0}" == 1 && "$SKIP_HELM" != 1 ]]; then
+  echo "==> Roll the three services to pick up new images"
+  for D in public-api-server internal-api-server worker; do
+    kubectl -n "$NS" rollout restart "deploy/$D" 2>/dev/null || true
+  done
 fi
 
 echo

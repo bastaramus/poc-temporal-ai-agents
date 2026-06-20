@@ -25,9 +25,16 @@ async function verifyUserJwt(authz: string | undefined) {
     throw new Error(`bad audience: azp=${payload.azp} aud=${JSON.stringify(payload.aud)}`);
   }
   const tenant_id = payload.tenant_id;
-  const sub = payload.sub;
   if (typeof tenant_id !== 'string') throw new Error('tenant_id missing in JWT');
-  if (typeof sub !== 'string') throw new Error('sub missing in JWT');
+  // Prefer sub (stable identifier), fall back to preferred_username for
+  // public-client password-grant flows where Keycloak may omit sub.
+  const sub =
+    typeof payload.sub === 'string'
+      ? payload.sub
+      : typeof payload.preferred_username === 'string'
+        ? (payload.preferred_username as string)
+        : undefined;
+  if (!sub) throw new Error('no usable subject claim (sub or preferred_username)');
   return { tenant_id, sub };
 }
 
