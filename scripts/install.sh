@@ -23,11 +23,13 @@ usage() {
   cat <<EOF
 Usage: $0 [--skip-build] [--skip-load] [--skip-helm] [-h|--help]
 
-  --skip-build   skip podman build of the three service images
+  --skip-build   skip building the three service images (podman or docker)
   --skip-load    skip pushing images into the minikube cluster
   --skip-helm    skip namespace+configmaps+helmfile apply
 
 Env vars: SKIP_BUILD=1, SKIP_LOAD=1, SKIP_HELM=1 (same effect).
+         CONTAINER_ENGINE=podman|docker forces a specific build engine
+         (default: podman if installed, otherwise docker).
 EOF
 }
 
@@ -49,7 +51,25 @@ require minikube
 require kubectl
 require helm
 require helmfile
-[[ "$SKIP_BUILD" == 1 ]] || require podman
+
+# ── Container engine detection ─────────────────────────────────────────
+# Prefer podman; fall back to docker. Override with CONTAINER_ENGINE=docker.
+ENGINE="${CONTAINER_ENGINE:-}"
+if [[ -z "$ENGINE" ]]; then
+  if command -v podman >/dev/null 2>&1; then
+    ENGINE=podman
+  elif command -v docker >/dev/null 2>&1; then
+    ENGINE=docker
+  fi
+fi
+if [[ "$SKIP_BUILD" != 1 || "$SKIP_LOAD" != 1 ]]; then
+  if [[ -z "$ENGINE" ]]; then
+    echo "Missing tool: neither 'podman' nor 'docker' found." >&2
+    exit 1
+  fi
+  command -v "$ENGINE" >/dev/null 2>&1 || { echo "Missing tool: $ENGINE"; exit 1; }
+  echo "==> container engine: $ENGINE"
+fi
 
 if ! minikube status --format '{{.Host}}' 2>/dev/null | grep -q Running; then
   echo "minikube is not running. Run scripts/bootstrap-cluster.sh first." >&2
@@ -59,32 +79,33 @@ fi
 if [[ "$SKIP_BUILD" == 1 ]]; then
   echo "==> [skipped] Build service images"
 else
-  echo "==> Build service images in the rootful podman machine"
-  # `minikube podman-env` only works for clusters running the `crio` runtime;
-  # this cluster uses `containerd`, so we build locally (against the user's
-  # existing rootful podman machine) and then ship the images into the cluster
-  # with `minikube image load`. That works for any container runtime.
+  echo "==> Build service images with $ENGINE"
+  # `minikube {podman,docker}-env` only works for matching cluster runtimes;
+  # this cluster uses `containerd`, so we build locally and then ship the
+  # images into the cluster with `minikube image load`. That works for any
+  # container runtime.
   #
   # Detect the cluster node arch (arm64 on Apple Silicon, amd64 on Intel) and
   # build for that — `minikube image load` rejects mismatched-arch tarballs.
   NODE_ARCH=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || echo amd64)
-  PLATFORM="${PODMAN_PLATFORM:-linux/${NODE_ARCH}}"
+  # PODMAN_PLATFORM kept for backward compat; CONTAINER_PLATFORM is the new name.
+  PLATFORM="${CONTAINER_PLATFORM:-${PODMAN_PLATFORM:-linux/${NODE_ARCH}}}"
   echo "    platform: $PLATFORM"
-  podman build --platform "$PLATFORM" -t poc/public-api-server:dev   "$ROOT/services/public-api-server"
-  podman build --platform "$PLATFORM" -t poc/internal-api-server:dev "$ROOT/services/internal-api-server"
-  podman build --platform "$PLATFORM" -t poc/worker:dev              "$ROOT/temporal/worker"
+  "$ENGINE" build --platform "$PLATFORM" -t poc/public-api-server:dev   "$ROOT/services/public-api-server"
+  "$ENGINE" build --platform "$PLATFORM" -t poc/internal-api-server:dev "$ROOT/services/internal-api-server"
+  "$ENGINE" build --platform "$PLATFORM" -t poc/worker:dev              "$ROOT/temporal/worker"
 fi
 
 if [[ "$SKIP_LOAD" == 1 ]]; then
   echo "==> [skipped] Push images into the cluster"
   RELOADED=0
 else
-  echo "==> Push images into the cluster"
+  echo "==> Push images into the cluster (via $ENGINE save)"
   # `minikube image load` accepts a tarball on stdin and works regardless of
   # the cluster's container runtime (containerd, crio, docker).
-  podman save poc/public-api-server:dev   | minikube image load -
-  podman save poc/internal-api-server:dev | minikube image load -
-  podman save poc/worker:dev              | minikube image load -
+  "$ENGINE" save poc/public-api-server:dev   | minikube image load -
+  "$ENGINE" save poc/internal-api-server:dev | minikube image load -
+  "$ENGINE" save poc/worker:dev              | minikube image load -
   RELOADED=1
 fi
 

@@ -94,40 +94,65 @@ load-bearing security properties:
                     └──────────────────┘      └──────────────────┘
 ```
 
-## Prerequisites (macOS, no Docker Desktop)
+## Prerequisites (macOS)
 
-The PoC runs on **minikube** (with the **podman** driver). All tools come from Homebrew:
+The PoC runs on **minikube** with **podman** (preferred) or **docker** as the
+container engine. All tools come from Homebrew:
 
 ```sh
 brew install podman minikube kubectl helm helmfile k9s jq curl
+# or, if you already use Docker Desktop, podman is not required
 ```
 
 Resource minimums for the VM that hosts the cluster: **4 vCPU, 8 GiB RAM,
 40 GiB disk.** Bump RAM to 12 GiB if you also turn on the Temporal Web UI.
 
+> The scripts and Makefile auto-detect the engine: **podman first, docker
+> fallback.** Force a specific one with `CONTAINER_ENGINE=docker` (or
+> `=podman`).
+>
 > Apple Silicon vs. Intel: `scripts/install.sh` reads the cluster node's
 > architecture (`kubectl get node -o jsonpath='{...architecture}'`) and passes
-> the matching `--platform linux/{arm64|amd64}` to `podman build`. Override
-> with `PODMAN_PLATFORM=linux/...` if you ever need to.
+> the matching `--platform linux/{arm64|amd64}` to the build. Override with
+> `CONTAINER_PLATFORM=linux/...` (or the legacy `PODMAN_PLATFORM=linux/...`).
 
 ## Install (first run, end-to-end)
 
-```sh
-# 1. One-time: rootful podman machine + minikube cluster + kubectl context.
-make bootstrap
+### Step 0 — bootstrap the cluster (optional)
 
-# 2. Build the three service images directly into the cluster's runtime,
+> **Skip this step if you already have a running minikube cluster.** It only
+> needs to run once per machine (or after a `minikube delete`).
+>
+> **⚠️ Podman is preferred; docker is the fallback.**
+> `scripts/bootstrap-cluster.sh` and the Makefile try `podman` first and fall
+> back to `docker` if podman isn't installed. With podman the script
+> provisions a rootful machine and starts minikube with `--driver=podman`;
+> with docker it starts minikube with `--driver=docker` (Docker Desktop or a
+> compatible daemon must be running). Podman is the preferable choice on
+> macOS without Docker Desktop. If you already have a minikube cluster
+> running, the rest of the Makefile targets work regardless of driver — they
+> only need `kubectl` to point at it.
+
+```sh
+# One-time: container engine + minikube cluster + kubectl context.
+make bootstrap
+```
+
+### Step-by-step
+
+```sh
+# 1. Build the three service images directly into the cluster's runtime,
 #    then helmfile-apply Postgres / Keycloak / Temporal / public-api /
 #    internal-api / worker. Re-run after any code change.
 make install
 
-# 3. In another terminal — port-forwards for curl-based tests.
+# 2. In another terminal — port-forwards for curl-based tests.
 make pf
 
-# Check. status
+# Check status
 make status
 
-# 4. Overview it:
+# 3. Overview it:
 k9s
 ```
 
@@ -142,8 +167,11 @@ minikube stop            # pause; preserves cluster state
 minikube start           # resume
 minikube delete          # nuke the cluster (next install needs bootstrap-cluster.sh again)
 
+# If you're using podman:
 podman machine stop      # also stops the cluster
 podman machine start
+
+# If you're using docker, just start/stop Docker Desktop (or `docker` daemon).
 ```
 
 ## Run the tests with `make`
@@ -363,22 +391,6 @@ previous tenant's setting to the next pooled checkout.
 | No OTel propagation | trace_id minted at public api, propagated through Temporal context |
 | Cedar deferred entirely (Quarter 2 in the SUBMISSION) | Cedar policy bundle replaces ad-hoc capability checks |
 
-## Production hardening checklist
-
-- Namespace per tenant in Kubernetes; NetworkPolicy default-deny.
-- Worker deployment per tenant or per isolation tier; KEDA on queue depth.
-- Per-tenant Temporal namespace **only** when a customer needs hard rate-limit
-  / retention / RBAC isolation at the workflow layer. Default stays shared.
-- Per-tenant DB role, schema, or DB; per-tenant KMS keys.
-- Pod Security `restricted` profile; gVisor / Kata for untrusted-code activities.
-- Token-exchange chained from end-user JWT, not service account.
-- Short-lived everything: 15-min narrowed JWTs, IRSA/Workload-Identity STS.
-- Audit log to WORM (S3 Object Lock, 7-yr); manifest indexed by trace_id.
-- Rate limits at LiteLLM and the public api.
-- Policy tests in CI; Cedar policy review process.
-- Secret management via External Secrets / Vault; no plaintext in values files.
-- No long-lived user JWT passed into workers.
-
 ## Exact commands
 
 ```sh
@@ -398,10 +410,11 @@ make test                                        # cross-tenant denial assertion
 |---|---|
 | `minikube start` complains "rootless not supported" | `podman machine stop && podman machine set --rootful && podman machine start` |
 | First boot is slow | Normal — `podman machine init` downloads a Fedora CoreOS image (~700 MB). Subsequent starts are seconds. |
-| `exec format error` in pod logs, or `minikube image load` says "does not match arch of the container runtime" | Image arch ≠ cluster arch. `scripts/install.sh` auto-detects from the node, so just re-run `make install`. To force a specific arch: `PODMAN_PLATFORM=linux/arm64 ./scripts/install.sh` (or `linux/amd64`). |
+| `exec format error` in pod logs, or `minikube image load` says "does not match arch of the container runtime" | Image arch ≠ cluster arch. `scripts/install.sh` auto-detects from the node, so just re-run `make install`. To force a specific arch: `CONTAINER_PLATFORM=linux/arm64 ./scripts/install.sh` (or `linux/amd64`; `PODMAN_PLATFORM=` still works for backward compat). |
 | `port-forward.sh` connections drop after a sleep | Kill it and rerun, or use k9s `f` (it auto-reconnects). |
-| Pods stuck `ImagePullBackOff` for `poc/*:dev` | The `podman save \| minikube image load -` step didn't run or didn't reach the cluster. Re-run `make build` (or `./scripts/install.sh`) and check `minikube image ls \| grep poc/`. |
-| `minikube podman-env` errors with "only compatible with crio runtime" | Expected — this cluster uses `containerd`. Build locally and use `podman save \| minikube image load -` instead, which is what `scripts/install.sh` and `make build` already do. |
+| Pods stuck `ImagePullBackOff` for `poc/*:dev` | The `<engine> save \| minikube image load -` step didn't run or didn't reach the cluster. Re-run `make build` (or `./scripts/install.sh`) and check `minikube image ls \| grep poc/`. |
+| `minikube podman-env` / `docker-env` errors with "only compatible with crio/docker runtime" | Expected — this cluster uses `containerd`. Build locally and use `<engine> save \| minikube image load -` instead, which is what `scripts/install.sh` and `make build` already do. |
+| Want to force docker even though podman is installed | `CONTAINER_ENGINE=docker make install` (or set it in `make build`). |
 | Out of memory: Keycloak or Temporal OOMKilled | Bump the VM: `minikube stop && minikube delete && VM_MEMORY_MIB=12288 ./scripts/bootstrap-cluster.sh`. |
 | `helmfile apply` chart-version errors | Versions in `helmfile.yaml` are pinned with `# TODO`; update them to whatever your local cache resolves with `helm search repo bitnami/postgresql -l \| head`. |
 
