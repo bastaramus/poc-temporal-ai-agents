@@ -92,19 +92,84 @@ The data-layer gate is **Postgres RLS with `FORCE ROW LEVEL SECURITY`** on every
 
 # Section 2 — Pitfall matrix
 
-| # | Risk | Mechanism in this design | Residual risk I accept |
-|---|---|---|---|
-| 1 | **Non-idempotent side effects** | Temporal workflow + activities (Restate / Camunda 8 may be considered. State and idempotency keys for every external side-effect call are persisted to Postgres before the call, so a retry reads the prior result instead of re-issuing it. | Vendors that ignore our idempotency key (some regulator portals can). For those, the activity is `maxAttempts=1` and a failure becomes a **human task** via a Temporal `humanDecision` Signal. |
-| 2 | **Stuck agents** | Temporal activity heartbeats + timeout per activity. A missing heartbeat times the activity out and routes to the same human-task path as risk #1. | False positives on legitimately slow tasks. Mitigated by per-task-type timeout profiles, not a single global cap. |
-| 3 | **Noisy neighbors and cost runaway** | LiteLLM can enforce per-tenant tokens limit. Proxy quotas per tenant on bytes/min. Breach → 429 with Retry-After, alert to tenant + ops. | A bad tenant can still consume up to their daily budget in one minute. |
-| 4 | **Prompt injection from the open web** | The agent has no direct database access. It can only invoke tools exposed by the internal api-server with JWT auth. Postgres RLS. Cedar policies can be added later. | The LLM can still be tricked into producing a bad-but-allowed action (filing the wrong form). |
-| 5 | **Shared egress reputation** | A third-party provider such as Bright Data or Oxylabs can be considered, but this adds significant compliance, security, and reputational risk. Per-tenant infrastructure-level isolation may be required in the future (costy). One possible approach is to implement it with a Kubernetes operator (custom CRD + controller that launches per-tenant proxy and sets network policies), but that would add significant complexity. For now, I would prefer to avoid this and keep it out of the initial scope. | One tenant's bad reputation still hurts that tenant's checks. |
-| 6 | **Evidence and audit** | Every task writes a manifest to S3 with Object Lock in compliance mode (7-year retention): HAR, screenshot per action, full LLM input/output, DB write log, signed by KMS. Manifest indexed in a separate, append-only Postgres table by (tenant_id, trace_id, task_id). | Evidence storage cost. Mitigated by lifecycle-tiering bundles older than 90 days to Glacier. Engineering effort to implement. |
-| 7 | **Vendor and model drift** | LiteLLM with explicit version pins (no latest, no aliases). New model = new workflow version -> 5% canary. For proxy / captcha / SMS, a vendor-health daemon + priority list with circuit breaker. | Silent quality regression.Failover to a backup vendor can significantly increase per-task cost — backups are usually pricier or slower. |
-| 8 | **Long tasks outlive everything** | Workflow state lives in Temporal, not the pod. pod loss = activity retry from last checkpoint. The narrowed task JWT is 15 min; activities request a fresh exchanged token from Keycloak at the heartbeat boundary if a task runs longer. Deploys are handled with drainTimeout = maxTaskDuration; old pods finish in-flight work, new triggers go to fresh pods. STS / DB credentials live only inside the internal api-server (which deploys independently and uses its own rolling-refresh). | Pods stuck in graceful-drain for the full 15 min during a deploy slow rollouts. Deploys cost a warm-pool overlap window (~15 min × pool size). |
-| 9 | **PII and secrets in observability** | Fluent Bit filters with regex + key-allowlist; default-deny on unknown fields. Screenshots pass through a DOM-aware redactor that masks input fields with type=password / data-sensitive. | Huge effort to implement and maintain. |
-| 10 | **Blast radius across tenants** | Unit of isolation = one pod, one task, one tenant. gVisor on the runtime, JWT scoped to one tenant, Postgres RLS (api-server sets app.tenant_id from verified JWT; agent pods talk to api-server, not Postgres directly). A poisoned input or compromised dep is contained to its pod's 10-min lifetime. DevSecOps practices to reduce the risks must be implemented (SAST, SCA checks, golden images, etc.) | A bug in the api-server's tenant-scope or RLS-context middleware is a fleet-wide risk; mitigated by an integration test that asserts cross-tenant queries return zero rows. |
-| 11 | **Lost work when an agent dies** | emporal (see #1). | A task that crashes after a non-idempotent vendor call but before recording the result. |
+<table>
+  <thead>
+    <tr>
+      <th class="idx">#</th>
+      <th>Risk</th>
+      <th>Mechanism in this design</th>
+      <th>Residual risk I accept</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="idx">1</td>
+      <td><strong>Non-idempotent side effects</strong></td>
+      <td>Temporal workflow + activities (Restate / Camunda 8 may be considered. State and idempotency keys for every external side-effect call are persisted to Postgres before the call, so a retry reads the prior result instead of re-issuing it.</td>
+      <td>Vendors that ignore our idempotency key (some regulator portals can). For those, the activity is <code>maxAttempts=1</code> and a failure becomes a <strong>human task</strong> via a Temporal <code>humanDecision</code> Signal.</td>
+    </tr>
+    <tr>
+      <td class="idx">2</td>
+      <td><strong>Stuck agents</strong></td>
+      <td>Temporal activity heartbeats + timeout per activity. A missing heartbeat times the activity out and routes to the same human-task path as risk #1.</td>
+      <td>False positives on legitimately slow tasks. Mitigated by per-task-type timeout profiles, not a single global cap.</td>
+    </tr>
+    <tr>
+      <td class="idx">3</td>
+      <td><strong>Noisy neighbors and cost runaway</strong></td>
+      <td>LiteLLM can enforce per-tenant tokens limit. Proxy quotas per tenant on bytes/min. Breach → 429 with Retry-After, alert to tenant + ops.</td>
+      <td>A bad tenant can still consume up to their daily budget in one minute.</td>
+    </tr>
+    <tr>
+      <td class="idx">4</td>
+      <td><strong>Prompt injection from the open web</strong></td>
+      <td>The agent has no direct database access. It can only invoke tools exposed by the internal api-server with JWT auth. Postgres RLS. Cedar policies can be added later.</td>
+      <td>The LLM can still be tricked into producing a bad-but-allowed action (filing the wrong form).</td>
+    </tr>
+    <tr>
+      <td class="idx">5</td>
+      <td><strong>Shared egress reputation</strong></td>
+      <td>A third-party provider such as Bright Data or Oxylabs can be considered, but this adds significant compliance, security, and reputational risk. Per-tenant infrastructure-level isolation may be required in the future (costy). One possible approach is to implement it with a Kubernetes operator (custom CRD + controller that launches per-tenant proxy and sets network policies), but that would add significant complexity. For now, I would prefer to avoid this and keep it out of the initial scope.</td>
+      <td>One tenant's bad reputation still hurts that tenant's checks.</td>
+    </tr>
+    <tr>
+      <td class="idx">6</td>
+      <td><strong>Evidence and audit</strong></td>
+      <td>Every task writes a manifest to S3 with Object Lock in compliance mode (7-year retention): HAR, screenshot per action, full LLM input/output, DB write log, signed by KMS. Manifest indexed in a separate, append-only Postgres table by (tenant_id, trace_id, task_id).</td>
+      <td>Evidence storage cost. Mitigated by lifecycle-tiering bundles older than 90 days to Glacier. Engineering effort to implement.</td>
+    </tr>
+    <tr>
+      <td class="idx">7</td>
+      <td><strong>Vendor and model drift</strong></td>
+      <td>LiteLLM with explicit version pins (no latest, no aliases). New model = new workflow version -&gt; 5% canary. For proxy / captcha / SMS, a vendor-health daemon + priority list with circuit breaker.</td>
+      <td>Silent quality regression. Failover to a backup vendor can significantly increase per-task cost — backups are usually pricier or slower.</td>
+    </tr>
+    <tr>
+      <td class="idx">8</td>
+      <td><strong>Long tasks outlive everything</strong></td>
+      <td>Workflow state lives in Temporal, not the pod. pod loss = activity retry from last checkpoint. The narrowed task JWT is 15 min; activities request a fresh exchanged token from Keycloak at the heartbeat boundary if a task runs longer. Deploys are handled with drainTimeout = maxTaskDuration; old pods finish in-flight work, new triggers go to fresh pods. STS / DB credentials live only inside the internal api-server (which deploys independently and uses its own rolling-refresh).</td>
+      <td>Pods stuck in graceful-drain for the full 15 min during a deploy slow rollouts. Deploys cost a warm-pool overlap window (~15 min × pool size).</td>
+    </tr>
+    <tr>
+      <td class="idx">9</td>
+      <td><strong>PII and secrets in observability</strong></td>
+      <td>Fluent Bit filters with regex + key-allowlist; default-deny on unknown fields. Screenshots pass through a DOM-aware redactor that masks input fields with type=password / data-sensitive.</td>
+      <td>Huge effort to implement and maintain.</td>
+    </tr>
+    <tr>
+      <td class="idx">10</td>
+      <td><strong>Blast radius across tenants</strong></td>
+      <td>Unit of isolation = one pod, one task, one tenant. gVisor on the runtime, JWT scoped to one tenant, Postgres RLS (api-server sets app.tenant_id from verified JWT; agent pods talk to api-server, not Postgres directly). A poisoned input or compromised dep is contained to its pod's 10-min lifetime. DevSecOps practices to reduce the risks must be implemented (SAST, SCA checks, golden images, etc.)</td>
+      <td>A bug in the api-server's tenant-scope or RLS-context middleware is a fleet-wide risk; mitigated by an integration test that asserts cross-tenant queries return zero rows.</td>
+    </tr>
+    <tr>
+      <td class="idx">11</td>
+      <td><strong>Lost work when an agent dies</strong></td>
+      <td>Temporal (see #1).</td>
+      <td>A task that crashes after a non-idempotent vendor call but before recording the result.</td>
+    </tr>
+  </tbody>
+</table>
 
 ## 3. ADR — Compute substrate
 
@@ -152,8 +217,6 @@ at 200 concurrent / 5-min average task / 70% pool utilisation (~40k checks/day a
 | **Total** | **$0.80** | |
 
 ### Per-tenant ceiling
-
-Two ceilings, both enforced at LiteLLM and the public api-server (row 3 of the pitfall matrix):
 
 - **Daily cost cap** per tenant tier (free / silver / gold) — e.g. free $50/day, silver $2k/day, gold negotiated. On breach: triggers return `429` with `Retry-After: <seconds-to-midnight-UTC>`; in-flight workflows finish (no mid-task kills — that would create dirty state); Slack alert to tenant CSM + ops; tenant dashboard shows the cap line.
 

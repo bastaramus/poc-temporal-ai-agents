@@ -1,0 +1,29 @@
+@page {
+  size: 210mm 18in;
+  margin: 0.5in;
+}
+
+body {
+  font-family: Menlo;
+  font-size: 10px;
+}
+
+table {
+  border-collapse: collapse;
+  table-layout: auto;
+  width: 100%;
+}
+
+th, td {
+  border: 1px solid #999;
+  padding: 4px 8px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.idx {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
