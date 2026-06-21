@@ -4,7 +4,8 @@
 
 This repository was produced as part of an interview process for a **Lead
 Platform & Infrastructure Engineer** role (the company is intentionally not
-named here). It contains two artifacts:
+named here). It contains two artifacts: [`SUBMISSION.md`](./SUBMISSION.md) which includes
+the home task answer, and the lab environment with the PoC code.
 
 > **🟡 The actual answer to the home task lives in [`SUBMISSION.md`](./SUBMISSION.md).**
 > That document is the primary deliverable — architecture sketch, pitfall matrix,
